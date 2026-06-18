@@ -24,7 +24,8 @@ async_client = instructor.from_openai(
     AsyncOpenAI(
         base_url="https://api.groq.com/openai/v1",
         api_key=os.environ.get("GROQ_API_KEY")
-    )
+    ),
+    mode=instructor.Mode.JSON
 )
 
 async def map_parse_file(filename: str, source_code: str) -> FileSummary:

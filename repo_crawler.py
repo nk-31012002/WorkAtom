@@ -11,7 +11,8 @@ class RepositoryCrawler:
             ".idea", ".vscode", "dist", "build"
         }
         # Extensions we want to read (We can easily add .js, .ts, .java here later!)
-        self.supported_extensions = {".py"}
+        # self.supported_extensions = {".py"}
+        self.supported_extensions = {".py", ".js", ".jsx", ".ts", ".tsx"}
 
     def scan_repository(self) -> Dict[str, str]:
         """
