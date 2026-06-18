@@ -168,36 +168,43 @@ app = workflow.compile()
 # ==========================================
 # 6. RUN THE AGENTIC ENGINE
 # ==========================================
+# Updated execution block inside orchestrator_graph.py
 if __name__ == "__main__":
-    import ast
+    from repo_crawler import RepositoryCrawler
     
-    # Ingest our lab rat code target
-    with open("target_code.py", "r") as f:
-        target_source = f.read()
+    # 1. Dynamically scan the workspace directory
+    crawler = RepositoryCrawler(".")
+    live_codebase = crawler.scan_repository()
+    
+    # 2. Pick a target file found by the crawler to deeply analyze with our agents
+    # Let's target our complex e-commerce engine file dynamically!
+    target_file = "target_code.py" 
+    
+    if target_file in live_codebase:
+        print(f"\n⚡ Starting Multi-Agent Orchestration Run [Phase 2] on: {target_file}...")
         
-    print("\n⚡ Starting Multi-Agent Orchestration Run [Phase 2]...")
-    
-    initial_state = {
-        "filename": "target_code.py",
-        "raw_code": target_source,
-        "function_name": "process_user_shopping_cart_and_handle_everything_system",
-        "current_decomposition": {},
-        "critic_feedback": "",
-        "validation_passed": False,
-        "iterations": 0
-    }
-    
-    # Run the graph synchronously
-    final_output = app.invoke(initial_state)
-    
-    print("\n==================================================")
-    print("🎯 AGENTIC OPTIMIZATION COMPLETED")
-    print(f"Total Iterations Formed: {final_output['iterations']}")
-    print("==================================================")
-    
-    # Print the finalized, recursively verified steps
-    for step in final_output["current_decomposition"]["steps"]:
-        print(f"\nStep {step['step_number']}: {step['title']}")
-        print(f"  Category: {step['category']}")
-        print(f"  Impacts Steps: {step['affects_steps']}")
-        print(f"  Explanation: {step['explanation']}")
+        initial_state = {
+            "filename": target_file,
+            "raw_code": live_codebase[target_file],
+            "function_name": "process_order", # The complex engine function inside target_code.py
+            "current_decomposition": {},
+            "critic_feedback": "",
+            "validation_passed": False,
+            "iterations": 0
+        }
+        
+        # Run the graph synchronously through the self-correcting agents
+        final_output = app.invoke(initial_state)
+        
+        print("\n==================================================")
+        print("🎯 AGENTIC OPTIMIZATION COMPLETED")
+        print(f"Total Iterations Formed: {final_output['iterations']}")
+        print("==================================================")
+        
+        for step in final_output["current_decomposition"]["steps"]:
+            print(f"\nStep {step['step_number']}: {step['title']}")
+            print(f"  Category: {step['category']}")
+            print(f"  Impacts Steps: {step['affects_steps']}")
+            print(f"  Explanation: {step['explanation']}")
+    else:
+        print(f"[!] Target file '{target_file}' not found by repository crawler.")

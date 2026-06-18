@@ -83,40 +83,51 @@ def generate_mermaid_chart(result: CodeDecomposition):
             print(f"  Step{step.step_number} --> Step{affected}")
             
     print("```\n")
-
-def analyze_and_decompose_file(filename):
-    with open(filename, "r") as file:
-        source_code = file.read()
-        
-    tree = ast.parse(source_code)
     
-    print(f"=== Running Atomic Orchestrator [Phase 1] on {filename} ===")
-    
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef):
-            function_source = ast.get_source_segment(source_code, node)
-            
-            print(f"\n[Extracting] Sending '{node.name}' to Groq Decomposition Engine...")
-            
-            result = get_atomic_breakdown(node.name, function_source)
-            
-            print("\n==================================================")
-            print(f"FUNCTION: {result.function_name}")
-            print(f"OVERVIEW: {result.high_level_purpose}")
-            print("==================================================")
-            
-            for step in result.atomic_steps:
-                print(f"\nStep {step.step_number}: {step.title}")
-                print(f"  Category: {step.category}")
-                print(f"  What happens: {step.clear_explanation}")
-                print(f"  Affects Downstream Steps: {step.affects_steps}")
-            print("\n==================================================")
-            
-            # --- CRITICAL FIX: CALL THE VISUALIZER HERE ---
-            generate_mermaid_chart(result)
+# Replace from line 84 down to the end of parser_mvp.py with this:
 
+def analyze_and_decompose_file(raw_code: str, function_to_parse: str):
+    """Processes raw code content directly, bypasses disk reading, and builds visualization maps."""
+    try:
+        # Pass the raw_code string directly to your AST tree parser
+        tree = ast.parse(raw_code)
+    except SyntaxError as e:
+        print(f"[!] Syntax Error detected while generating AST: {e}")
+        return
+
+    print("  -> AST Structure Generated Successfully.")
+    print("  -> Contacting Breakdown Engine...")
+    
+    # FIX: Pass BOTH required positional arguments right here!
+    decomposition_result = get_atomic_breakdown(function_to_parse, raw_code)
+    
+    # --- STEP 3: Generate and display your charts ---
+    print("\n==================================================")
+    print("🎨 GENERATING INTERACTIVE VISUALIZATION CONTRACT")
+    print("==================================================")
+    
+    generate_mermaid_chart(decomposition_result)
+
+
+# Updated execution block inside parser_mvp.py
 if __name__ == "__main__":
-    if not os.environ.get("GROQ_API_KEY"):
-        print("\n[!] ERROR: Please set your GROQ_API_KEY environment variable before running.")
+    from repo_crawler import RepositoryCrawler
+    
+    # 1. Dynamically scan the workspace directory
+    crawler = RepositoryCrawler(".")
+    live_codebase = crawler.scan_repository()
+    
+    # 2. Pick a target file and function found by the crawler to visualize
+    target_file = "target_code.py" 
+    target_function = "process_order"
+    
+    if target_file in live_codebase:
+        print(f"\n⚡ Running Structural Breakdown Pipeline on: {target_file} -> {target_function}()...")
+        
+        # Ingest code directly from the crawler's memory matrix
+        raw_code_content = live_codebase[target_file]
+        
+        # Pass BOTH arguments into the main orchestration handler
+        analyze_and_decompose_file(raw_code_content, target_function)
     else:
-        analyze_and_decompose_file("target_code.py")
+        print(f"[!] Target file '{target_file}' not found by repository crawler.")
