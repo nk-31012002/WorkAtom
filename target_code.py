@@ -1,205 +1,389 @@
 import time
 import random
 import hashlib
-import os
+import json
+import uuid
+from dataclasses import dataclass
 
-GLOBAL_DB_STATE = {
-    "inventory": {"ITEM_101": 50, "ITEM_102": 0},
-    "users": {
-        "USR_99": {
-            "balance": 500,
-            "tier": "gold",
-            "email": "dev@test.com",
-            "reward_points": 900,
-            "purchase_count": 12,
-            "flags": {}
+DATABASE = {
+    "customers": {
+        "CUST_1001": {
+            "balance": 5000.0,
+            "tier": "enterprise",
+            "reward_points": 1200,
+            "email": "customer@example.com",
+            "country": "US",
+            "region": "NY",
+            "purchase_count": 42,
+            "device_id": "DEV-9001",
+            "attributes": {}
         }
     },
-    "ledger": [],
+    "inventory": {
+        "SKU_A": 100,
+        "SKU_B": 8
+    },
+    "orders": [],
     "audit": [],
     "metrics": {
         "orders": 0,
-        "failures": 0
+        "rejected": 0
     }
 }
 
-RUNTIME_FLAGS = {
-    "holiday_mode": False,
-    "experimental_tax": True,
-    "legacy_rewards": True
+FEATURES = {
+    "dynamic_pricing": True,
+    "risk_engine": True,
+    "advanced_tax": True,
+    "loyalty_v2": True,
+    "inventory_buffer": True
 }
 
-LAST_TRANSACTION_CACHE = {}
+CACHE = {}
+EVENTS = []
 
-def process_user_shopping_cart_and_handle_everything_system(
-        user_id,
-        item_id,
-        quantity,
-        discount_code=None,
-        source_system="WEB",
-        operator_override=None):
 
-    print("=" * 50)
-    print("STARTING MASSIVE ORDER PIPELINE")
-    print("=" * 50)
+@dataclass
+class PricingContext:
+    subtotal: float
+    discount: float
+    variant: str
 
-    GLOBAL_DB_STATE["metrics"]["orders"] += 1
 
-    if user_id not in GLOBAL_DB_STATE["users"]:
-        GLOBAL_DB_STATE["metrics"]["failures"] += 1
-        return {"success": False, "error": "User unknown"}
+@dataclass
+class RiskContext:
+    score: int
+    blocked: bool
 
-    user_profile = GLOBAL_DB_STATE["users"][user_id]
 
-    if item_id not in GLOBAL_DB_STATE["inventory"]:
-        GLOBAL_DB_STATE["metrics"]["failures"] += 1
-        return {"success": False, "error": "Item out of catalog"}
+def cache_fetch(key):
+    value = CACHE.get(key)
 
-    available_stock = GLOBAL_DB_STATE["inventory"][item_id]
+    if not value:
+        return None
 
-    # Hidden inventory override
-    if source_system == "ADMIN_PANEL":
-        available_stock += 999999
+    if value["expiry"] < time.time():
+        del CACHE[key]
+        return None
 
-    if quantity <= 0:
-        return {"success": False, "error": "Bad quantity"}
+    return value["payload"]
 
-    if available_stock < quantity:
-        return {"success": False, "error": "Insufficient stock"}
 
-    # Pricing logic scattered everywhere
-    base_price = 120.00 if item_id == "ITEM_101" else 45.00
+def cache_store(key, payload, ttl=300):
+    CACHE[key] = {
+        "payload": payload,
+        "expiry": time.time() + ttl
+    }
 
-    if time.localtime().tm_wday == 0:
-        base_price *= 0.97
 
-    if user_profile["purchase_count"] > 10:
-        base_price *= 0.98
-
-    subtotal = quantity * base_price
-
-    # Discount spaghetti
-    if discount_code:
-        if discount_code == "SUPER_DEAL":
-            if user_profile["tier"] == "gold":
-                subtotal *= 0.8
-            else:
-                subtotal *= 0.95
-
-        elif discount_code == "FLASH":
-            subtotal -= 17.42
-
-        elif discount_code == "WELCOME":
-            subtotal *= 0.91
-
-    # Random side-effect
-    if subtotal > 100:
-        user_profile["flags"]["high_value_customer"] = True
-
-    # Tax logic mixed with runtime flags
-    tax_rate = 0.08
-
-    if subtotal > 200:
-        tax_rate = 0.12
-
-    if RUNTIME_FLAGS["experimental_tax"]:
-        tax_rate += 0.005
-
-    if RUNTIME_FLAGS["holiday_mode"]:
-        tax_rate = tax_rate * 0.75
-
-    environmental_fee = 0
-
-    if quantity > 3:
-        environmental_fee = quantity * 0.67
-
-    total_cost = subtotal + (subtotal * tax_rate) + environmental_fee
-
-    # Legacy rewards subsystem
-    if RUNTIME_FLAGS["legacy_rewards"]:
-        points_discount = min(
-            user_profile["reward_points"] / 1000,
-            5
-        )
-        total_cost -= points_discount
-
-    # Duplicate balance checks
-    if user_profile["balance"] < total_cost:
-        GLOBAL_DB_STATE["metrics"]["failures"] += 1
-        return {"success": False, "error": "Insufficient funds"}
-
-    if total_cost > user_profile["balance"]:
-        return {"success": False, "error": "Payment issue"}
-
-    # Weird fraud check
-    fraud_score = random.randint(0, 100)
-
-    if fraud_score > 95:
-        GLOBAL_DB_STATE["audit"].append({
-            "event": "FRAUD_REVIEW",
-            "user": user_id
-        })
-
-    # Mutate state everywhere
-    user_profile["balance"] -= total_cost
-    user_profile["purchase_count"] += 1
-
-    if quantity > 2:
-        user_profile["reward_points"] += quantity * 3
-
-    GLOBAL_DB_STATE["inventory"][item_id] -= quantity
-
-    transaction_id = (
-        hashlib.md5(
-            f"{time.time()}{user_id}{item_id}".encode()
-        ).hexdigest()
-    )
-
-    LAST_TRANSACTION_CACHE[user_id] = transaction_id
-
-    ledger_record = {
-        "txn_id": transaction_id,
-        "user": user_id,
-        "amount_spent": total_cost,
-        "item": item_id,
-        "qty": quantity,
-        "source": source_system,
+def emit(event, payload):
+    EVENTS.append({
+        "event": event,
+        "payload": payload,
         "timestamp": time.time()
-    }
-
-    GLOBAL_DB_STATE["ledger"].append(ledger_record)
-
-    # Audit trail mixed into checkout logic
-    GLOBAL_DB_STATE["audit"].append({
-        "event": "ORDER_COMPLETED",
-        "txn": transaction_id,
-        "operator": operator_override
     })
 
-    # Mock email
-    email_payload = (
-        f"To:{user_profile['email']}|"
-        f"Txn:{transaction_id}|"
-        f"Spent:{total_cost}"
+
+def record_metric(name, value):
+    DATABASE["audit"].append({
+        "type": "metric",
+        "name": name,
+        "value": value,
+        "timestamp": time.time()
+    })
+
+
+def load_customer(customer_id):
+    return DATABASE["customers"].get(customer_id)
+
+
+def reserve_stock(sku, quantity, source):
+    stock = DATABASE["inventory"].get(sku, 0)
+
+    if FEATURES["inventory_buffer"]:
+        stock += 5
+
+    if source == "OPS":
+        stock += 100000
+
+    if stock < quantity:
+        raise RuntimeError("STOCK_UNAVAILABLE")
+
+    return {
+        "sku": sku,
+        "reserved": quantity,
+        "remaining": stock - quantity
+    }
+
+
+def resolve_price(customer, sku, quantity, promo):
+    catalog = {
+        "SKU_A": 199.0,
+        "SKU_B": 899.0
+    }
+
+    base = catalog.get(sku, 50)
+
+    variant = "A"
+
+    if FEATURES["dynamic_pricing"]:
+        if random.randint(1, 100) > 40:
+            base *= 1.025
+            variant = "B"
+
+    if customer["tier"] == "enterprise":
+        base *= 0.97
+
+    if customer["purchase_count"] > 25:
+        base *= 0.985
+
+    discount = 0
+
+    if promo == "MEGA":
+        discount += 0.18
+
+    if promo == "WELCOME":
+        discount += 0.08
+
+    subtotal = quantity * base
+    subtotal *= (1 - discount)
+
+    return PricingContext(
+        subtotal=subtotal,
+        discount=discount,
+        variant=variant
     )
 
-    print("[EMAIL]", email_payload)
 
-    # Mock file logging
-    try:
-        with open("system_audit.log", "a") as f:
-            f.write(str(ledger_record) + "\n")
-    except:
-        pass
+def resolve_tax(customer, subtotal):
+    rate = 0.08
 
-    # Hidden config mutation
-    if random.randint(1, 20) == 7:
-        RUNTIME_FLAGS["holiday_mode"] = not RUNTIME_FLAGS["holiday_mode"]
+    if subtotal > 1000:
+        rate = 0.13
+
+    if FEATURES["advanced_tax"]:
+        rate += 0.015
+
+    if customer["region"] == "NY":
+        rate += 0.01
+
+    return subtotal * rate
+
+
+def evaluate_risk(customer, amount):
+    score = random.randint(5, 80)
+
+    if FEATURES["risk_engine"]:
+        if amount > 2000:
+            score += 20
+
+        if customer["purchase_count"] < 3:
+            score += 15
+
+        if customer["reward_points"] < 100:
+            score += 5
+
+    return RiskContext(
+        score=score,
+        blocked=score > 85
+    )
+
+
+def apply_rewards(customer, total):
+    if not FEATURES["loyalty_v2"]:
+        return total
+
+    credit = min(
+        customer["reward_points"] / 150,
+        15
+    )
+
+    return total - credit
+
+
+def execute_payment(customer, amount):
+    if customer["balance"] < amount:
+        return False
+
+    customer["balance"] -= amount
+    return True
+
+
+def synchronize_profile(customer_id, order_id):
+    DATABASE["audit"].append({
+        "type": "crm_sync",
+        "customer": customer_id,
+        "order": order_id,
+        "timestamp": time.time()
+    })
+
+
+def process_fulfillment(customer_id, sku, quantity):
+    fulfillment_id = str(uuid.uuid4())
+
+    emit(
+        "FULFILLMENT_CREATED",
+        {
+            "fulfillment_id": fulfillment_id,
+            "customer": customer_id,
+            "sku": sku,
+            "quantity": quantity
+        }
+    )
+
+    return fulfillment_id
+
+
+def process_order(
+    customer_id,
+    sku,
+    quantity,
+    promo=None,
+    source="WEB",
+    operator=None
+):
+    DATABASE["metrics"]["orders"] += 1
+
+    customer = load_customer(customer_id)
+
+    if not customer:
+        DATABASE["metrics"]["rejected"] += 1
+        return {
+            "success": False,
+            "error": "UNKNOWN_CUSTOMER"
+        }
+
+    reserve_snapshot = reserve_stock(
+        sku,
+        quantity,
+        source
+    )
+
+    pricing = resolve_price(
+        customer,
+        sku,
+        quantity,
+        promo
+    )
+
+    tax = resolve_tax(
+        customer,
+        pricing.subtotal
+    )
+
+    handling_fee = (
+        quantity * 0.75
+        if quantity > 5
+        else 0
+    )
+
+    total = pricing.subtotal + tax + handling_fee
+
+    total = apply_rewards(
+        customer,
+        total
+    )
+
+    risk = evaluate_risk(
+        customer,
+        total
+    )
+
+    if risk.blocked:
+        emit(
+            "ORDER_BLOCKED",
+            {
+                "customer": customer_id,
+                "score": risk.score
+            }
+        )
+
+        DATABASE["metrics"]["rejected"] += 1
+
+        return {
+            "success": False,
+            "risk_score": risk.score,
+            "error": "RISK_REVIEW"
+        }
+
+    payment_ok = execute_payment(
+        customer,
+        total
+    )
+
+    if not payment_ok:
+        DATABASE["metrics"]["rejected"] += 1
+
+        return {
+            "success": False,
+            "error": "PAYMENT_DECLINED"
+        }
+
+    DATABASE["inventory"][sku] -= quantity
+
+    order_id = hashlib.sha256(
+        f"{time.time()}{customer_id}{sku}{random.random()}".encode()
+    ).hexdigest()
+
+    fulfillment_id = process_fulfillment(
+        customer_id,
+        sku,
+        quantity
+    )
+
+    customer["purchase_count"] += 1
+    customer["reward_points"] += quantity * 4
+
+    order = {
+        "order_id": order_id,
+        "customer_id": customer_id,
+        "sku": sku,
+        "quantity": quantity,
+        "amount": round(total, 2),
+        "risk_score": risk.score,
+        "variant": pricing.variant,
+        "fulfillment_id": fulfillment_id,
+        "operator": operator,
+        "created_at": time.time()
+    }
+
+    DATABASE["orders"].append(order)
+
+    synchronize_profile(
+        customer_id,
+        order_id
+    )
+
+    record_metric(
+        "order_value",
+        total
+    )
+
+    emit(
+        "ORDER_COMPLETED",
+        order
+    )
+
+    cache_store(
+        f"recent-order:{customer_id}",
+        order_id,
+        ttl=1800
+    )
+
+    with open("runtime_pipeline.log", "a") as fp:
+        fp.write(json.dumps(order) + "\n")
+
+    if random.randint(1, 25) == 13:
+        FEATURES["dynamic_pricing"] = (
+            not FEATURES["dynamic_pricing"]
+        )
 
     return {
         "success": True,
-        "transaction_id": transaction_id,
-        "remaining_balance": user_profile["balance"],
-        "fraud_score": fraud_score,
-        "runtime_flags": RUNTIME_FLAGS
+        "order_id": order_id,
+        "fulfillment_id": fulfillment_id,
+        "remaining_balance": round(
+            customer["balance"], 2
+        ),
+        "risk_score": risk.score
     }
