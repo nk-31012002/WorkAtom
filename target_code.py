@@ -410,3 +410,190 @@ def process_order(
             "success": False,
             "error": str(e)
         }
+
+def process_order(
+    customer_id,
+    sku,
+    quantity,
+    promo=None,
+    source="WEB",
+    operator=None
+):
+    DATABASE["metrics"]["orders"] += 1
+
+    customer = load_customer(customer_id)
+
+    if not customer:
+        DATABASE["metrics"]["rejected"] += 1
+        return {
+            "success": False,
+            "error": "UNKNOWN_CUSTOMER"
+        }
+
+    reserve_snapshot = reserve_stock(
+        sku,
+        quantity,
+        source
+    )
+
+    pricing = resolve_price(
+        customer,
+        sku,
+        quantity,
+        promo
+    )
+
+    tax = resolve_tax(
+        customer,
+        pricing.subtotal
+    )
+
+    handling_fee = (
+        quantity * 0.75
+        if quantity > 5
+        else 0
+    )
+
+    total = pricing.subtotal + tax + handling_fee
+
+    total = apply_rewards(
+        customer,
+        total
+    )
+
+    risk = evaluate_risk(
+        customer,
+        total
+    )
+
+    if risk.blocked:
+        emit(
+            "ORDER_BLOCKED",
+            {
+                "customer": customer_id,
+                "score": risk.score
+            }
+        )
+
+        DATABASE["metrics"]["rejected"] += 1
+
+        return {
+            "success": False,
+            "risk_score": risk.score,
+            "error": "RISK_REVIEW"
+        }
+
+    payment_ok = execute_payment(
+        customer,
+        total
+    )
+
+    if not payment_ok:
+        DATABASE["metrics"]["rejected"] += 1
+
+        return {
+            "success": False,
+            "error": "PAYMENT_DECLINED"
+        }
+
+    DATABASE["inventory"][sku] -= quantity
+
+    order_id = hashlib.sha256(
+        f"{time.time()}{customer_id}{sku}{random.random()}".encode()
+    ).hexdigest()
+
+    fulfillment_id = process_fulfillment(
+        customer_id,
+        sku,
+        quantity
+    )
+
+    customer["purchase_count"] += 1
+    customer["reward_points"] += quantity * 4
+
+    order = {
+        "order_id": order_id,
+        "customer_id": customer_id,
+        "sku": sku,
+        "quantity": quantity,
+        "amount": round(total, 2),
+        "risk_score": risk.score,
+        "variant": pricing.variant,
+        "fulfillment_id": fulfillment_id,
+        "operator": operator,
+        "created_at": time.time()
+    }
+
+    DATABASE["orders"].append(order)
+
+    synchronize_profile(
+        customer_id,
+        order_id
+    )
+
+    record_metric(
+        "order_value",
+        total
+    )
+
+    emit(
+        "ORDER_COMPLETED",
+        order
+    )
+
+    cache_store(
+        f"recent-order:{customer_id}",
+        order_id,
+        ttl=1800
+    )
+
+    with open("runtime_pipeline.log", "a") as fp:
+        fp.write(json.dumps(order) + "\n")
+
+    # Additional 10 lines
+    customer["attributes"]["last_order"] = order_id
+    customer["attributes"]["last_order_amount"] = round(total, 2)
+    customer["attributes"]["last_order_time"] = time.time()
+
+    emit(
+        "CUSTOMER_UPDATED",
+        {
+            "customer": customer_id,
+            "order_id": order_id
+        }
+    )
+
+    cache_store(
+        f"customer:{customer_id}",
+        customer,
+        ttl=3600
+    )
+
+    record_metric(
+        "orders_processed",
+        1
+    )
+
+    DATABASE["audit"].append({
+        "type": "order_success",
+        "order": order_id
+    })
+
+    print(
+        f"Order {order_id[:8]} processed successfully"
+    )
+
+    if random.randint(1, 25) == 13:
+        FEATURES["dynamic_pricing"] = (
+            not FEATURES["dynamic_pricing"]
+        )
+
+    return {
+        "success": True,
+        "order_id": order_id,
+        "fulfillment_id": fulfillment_id,
+        "remaining_balance": round(
+            customer["balance"], 2
+        ),
+        "risk_score": risk.score
+    }
