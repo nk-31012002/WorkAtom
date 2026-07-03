@@ -6,107 +6,131 @@ from dataclasses import dataclass, field
 
 
 # ============================================================
+# GLOBAL STATE
+# ============================================================
+
+DATABASE = {
+    "applicants": {
+        "A100": {"name": "J. Rao", "score": 640, "income": 52000, "debts": 12000, "flags": []},
+        "A101": {"name": "P. Singh", "score": 710, "income": 88000, "debts": 4000, "flags": []},
+        "A102": {"name": "M. Devi", "score": 580, "income": 31000, "debts": 21000, "flags": ["late_payment"]},
+    },
+    "branches": {
+        "MAIN": {"reserve": 5_000_000, "risk_appetite": 1.0},
+        "SATELLITE": {"reserve": 750_000, "risk_appetite": 0.6},
+    },
+    "loans": [],
+}
+
+
+# ============================================================
 # SERVICE LOCATOR
 # ============================================================
 
-class Container:
-    _services = {}
+class Registry:
+    _bindings = {}
 
     @classmethod
-    def register(cls, name, service):
-        cls._services[name] = service
+    def bind(cls, key, value):
+        cls._bindings[key] = value
 
     @classmethod
-    def resolve(cls, name):
-        return cls._services[name]
+    def get(cls, key):
+        return cls._bindings[key]
 
 
 # ============================================================
-# EXECUTION CONTEXT
+# CONTEXT
 # ============================================================
 
 @dataclass
-class OrderContext:
-    customer_id: str
-    sku: str
-    quantity: int
-    promo: str = None
-    source: str = "WEB"
-    operator: str = None
+class LoanContext:
+    applicant_id: str
+    amount: float
+    term_months: int
+    branch: str = "MAIN"
+    channel: str = "ONLINE"
+    co_signer: str = None
 
-    customer: dict = None
-    reserve_snapshot: dict = None
-    pricing: object = None
-    tax: float = 0
-    total: float = 0
-    risk: object = None
-    payment_ok: bool = False
-    order_id: str = None
-    fulfillment_id: str = None
+    applicant: dict = None
+    branch_info: dict = None
+    credit: object = None
+    rate: float = 0.0
+    fees: float = 0.0
+    monthly_payment: float = 0.0
+    underwriting: object = None
+    approved: bool = False
+    loan_id: str = None
+    disbursement_id: str = None
 
-    metadata: dict = field(default_factory=dict)
+    trace: dict = field(default_factory=dict)
 
 
 # ============================================================
 # PIPELINE FRAMEWORK
 # ============================================================
 
-class Stage:
-    def execute(self, ctx):
+class Step:
+    def run(self, ctx):
         raise NotImplementedError()
 
 
-class Pipeline:
+class Workflow:
 
     def __init__(self):
-        self.stages = []
+        self.steps = []
 
-    def add(self, stage):
-        self.stages.append(stage)
+    def then(self, step):
+        self.steps.append(step)
         return self
 
-    def run(self, ctx):
-        for stage in self.stages:
-            ctx = stage.execute(ctx)
+    def execute(self, ctx):
+        for step in self.steps:
+            ctx = step.run(ctx)
         return ctx
 
 
 # ============================================================
-# RULE ENGINE
+# SCORING ENGINE
 # ============================================================
 
-class RuleEngine:
+class ScoreEngine:
 
     def __init__(self):
-        self.rules = []
+        self.modifiers = []
 
     def add(self, fn):
-        self.rules.append(fn)
+        self.modifiers.append(fn)
 
-    def evaluate(self, customer, amount):
-        score = random.randint(5, 80)
+    def evaluate(self, applicant, amount, branch_info):
+        base = random.randint(-10, 10)
 
-        for rule in self.rules:
-            score += rule(customer, amount)
+        for mod in self.modifiers:
+            base += mod(applicant, amount, branch_info)
 
-        return score
+        return base
 
 
-risk_rules = RuleEngine()
+underwriting_rules = ScoreEngine()
 
-risk_rules.add(
-    lambda c, a:
-    20 if a > 2000 else 0
+underwriting_rules.add(
+    lambda a, amt, b: -25 if a["score"] < 600 else 0
 )
 
-risk_rules.add(
-    lambda c, a:
-    15 if c["purchase_count"] < 3 else 0
+underwriting_rules.add(
+    lambda a, amt, b: 15 if a["income"] > 60000 else 0
 )
 
-risk_rules.add(
-    lambda c, a:
-    5 if c["reward_points"] < 100 else 0
+underwriting_rules.add(
+    lambda a, amt, b: -20 if "late_payment" in a["flags"] else 0
+)
+
+underwriting_rules.add(
+    lambda a, amt, b: -10 if (amt / max(a["income"], 1)) > 0.4 else 0
+)
+
+underwriting_rules.add(
+    lambda a, amt, b: int(10 * b["risk_appetite"])
 )
 
 
@@ -114,233 +138,193 @@ risk_rules.add(
 # STRATEGIES
 # ============================================================
 
-class PricingStrategy:
-
-    def price(self, customer, sku, qty, promo):
+class RateStrategy:
+    def compute(self, applicant, amount, term, branch_info):
         raise NotImplementedError()
 
 
-class DynamicPricing(PricingStrategy):
+class TieredRate(RateStrategy):
 
-    def price(self, customer, sku, qty, promo):
+    def compute(self, applicant, amount, term, branch_info):
 
-        catalog = {
-            "SKU_A": 199,
-            "SKU_B": 899
+        tiers = {
+            "A": 0.045,
+            "B": 0.065,
+            "C": 0.095,
         }
 
-        base = catalog.get(sku, 50)
+        tier = "B"
 
-        variant = "A"
+        if applicant["score"] >= 700:
+            tier = "A"
+        elif applicant["score"] < 620:
+            tier = "C"
 
-        if random.randint(1, 100) > 40:
-            base *= 1.025
-            variant = "B"
+        rate = tiers[tier]
 
-        if customer["tier"] == "enterprise":
-            base *= 0.97
+        if term > 60:
+            rate += 0.01
 
-        if customer["purchase_count"] > 25:
-            base *= 0.985
+        if random.randint(1, 100) > 55:
+            rate += 0.0025
+            tier += "+"
 
-        discount = 0
+        rate *= (2.0 - branch_info["risk_appetite"])
 
-        if promo == "MEGA":
-            discount += 0.18
-
-        subtotal = qty * base
-        subtotal *= (1 - discount)
-
-        return {
-            "subtotal": subtotal,
-            "variant": variant
-        }
+        return {"rate": rate, "tier": tier}
 
 
-class PricingFactory:
+class RateFactory:
 
     @staticmethod
     def resolve():
-        return DynamicPricing()
+        return TieredRate()
 
 
 # ============================================================
-# STAGES
+# STEPS
 # ============================================================
 
-class CustomerStage(Stage):
+class ApplicantStep(Step):
 
-    def execute(self, ctx):
+    def run(self, ctx):
+        applicant = DATABASE["applicants"].get(ctx.applicant_id)
 
-        customer = DATABASE["customers"].get(
-            ctx.customer_id
-        )
+        if not applicant:
+            raise RuntimeError("UNKNOWN_APPLICANT")
 
-        if not customer:
-            raise RuntimeError(
-                "UNKNOWN_CUSTOMER"
-            )
-
-        ctx.customer = customer
+        ctx.applicant = applicant
         return ctx
 
 
-class InventoryStage(Stage):
+class BranchStep(Step):
 
-    def execute(self, ctx):
+    def run(self, ctx):
+        info = DATABASE["branches"].get(ctx.branch)
 
-        stock = DATABASE["inventory"].get(
-            ctx.sku,
-            0
+        if not info:
+            raise RuntimeError("UNKNOWN_BRANCH")
+
+        if ctx.channel == "PARTNER":
+            info = dict(info)
+            info["risk_appetite"] += 0.15
+
+        if info["reserve"] < ctx.amount:
+            raise RuntimeError("INSUFFICIENT_RESERVE")
+
+        ctx.branch_info = info
+        return ctx
+
+
+class CreditStep(Step):
+
+    def run(self, ctx):
+        score = underwriting_rules.evaluate(
+            ctx.applicant, ctx.amount, ctx.branch_info
         )
 
-        if ctx.source == "OPS":
-            stock += 100000
-
-        stock += 5
-
-        if stock < ctx.quantity:
-            raise RuntimeError(
-                "OUT_OF_STOCK"
-            )
-
-        ctx.reserve_snapshot = {
-            "reserved": ctx.quantity,
-            "remaining": stock - ctx.quantity
+        ctx.credit = {
+            "adjustment": score,
+            "effective_score": ctx.applicant["score"] + score,
         }
 
         return ctx
 
 
-class PricingStage(Stage):
+class RateStep(Step):
 
-    def execute(self, ctx):
+    def run(self, ctx):
+        strategy = RateFactory.resolve()
 
-        strategy = PricingFactory.resolve()
-
-        ctx.pricing = strategy.price(
-            ctx.customer,
-            ctx.sku,
-            ctx.quantity,
-            ctx.promo
+        result = strategy.compute(
+            ctx.applicant, ctx.amount, ctx.term_months, ctx.branch_info
         )
+
+        ctx.rate = result["rate"]
+        ctx.trace["tier"] = result["tier"]
 
         return ctx
 
 
-class TaxStage(Stage):
+class FeeStep(Step):
 
-    def execute(self, ctx):
+    def run(self, ctx):
+        fee = ctx.amount * 0.01
 
-        subtotal = ctx.pricing["subtotal"]
+        if ctx.channel == "ONLINE":
+            fee *= 0.5
 
-        rate = 0.08
+        if ctx.co_signer:
+            fee -= 15
 
-        if subtotal > 1000:
-            rate = 0.13
+        fee = max(fee, 25)
 
-        rate += 0.025
-
-        ctx.tax = subtotal * rate
-
+        ctx.fees = fee
         return ctx
 
 
-class LoyaltyStage(Stage):
+class PaymentCalcStep(Step):
 
-    def execute(self, ctx):
+    def run(self, ctx):
+        monthly_rate = ctx.rate / 12
+        n = ctx.term_months
 
-        total = (
-            ctx.pricing["subtotal"]
-            + ctx.tax
-        )
+        if monthly_rate == 0:
+            payment = ctx.amount / n
+        else:
+            payment = (
+                ctx.amount
+                * monthly_rate
+                * (1 + monthly_rate) ** n
+                / ((1 + monthly_rate) ** n - 1)
+            )
 
-        credit = min(
-            ctx.customer["reward_points"] / 150,
-            15
-        )
-
-        ctx.total = total - credit
-
+        ctx.monthly_payment = payment + (ctx.fees / n)
         return ctx
 
 
-class RiskStage(Stage):
+class UnderwritingDecisionStep(Step):
 
-    def execute(self, ctx):
+    def run(self, ctx):
+        effective = ctx.credit["effective_score"]
 
-        score = risk_rules.evaluate(
-            ctx.customer,
-            ctx.total
-        )
+        dti = (ctx.monthly_payment * 12) / max(ctx.applicant["income"], 1)
 
-        ctx.risk = {
-            "score": score,
-            "blocked": score > 85
+        decision = {
+            "effective_score": effective,
+            "dti": dti,
+            "denied": effective < 590 or dti > 0.5,
         }
 
-        if ctx.risk["blocked"]:
-            raise RuntimeError(
-                "RISK_REVIEW"
-            )
+        ctx.underwriting = decision
 
+        if decision["denied"]:
+            raise RuntimeError("UNDERWRITING_DENIED")
+
+        ctx.approved = True
         return ctx
 
 
-class PaymentStage(Stage):
+class DisbursementStep(Step):
 
-    def execute(self, ctx):
+    def run(self, ctx):
+        DATABASE["branches"][ctx.branch]["reserve"] -= ctx.amount
 
-        if ctx.customer["balance"] < ctx.total:
-            raise RuntimeError(
-                "PAYMENT_DECLINED"
-            )
-
-        ctx.customer["balance"] -= ctx.total
-        ctx.payment_ok = True
-
-        return ctx
-
-
-class PersistenceStage(Stage):
-
-    def execute(self, ctx):
-
-        DATABASE["inventory"][
-            ctx.sku
-        ] -= ctx.quantity
-
-        ctx.order_id = hashlib.sha256(
-            (
-                str(time.time())
-                + str(random.random())
-                + ctx.customer_id
-            ).encode()
+        ctx.loan_id = hashlib.sha256(
+            (str(time.time()) + str(random.random()) + ctx.applicant_id).encode()
         ).hexdigest()
 
-        ctx.fulfillment_id = (
-            str(uuid.uuid4())
-        )
+        ctx.disbursement_id = str(uuid.uuid4())
 
-        DATABASE["orders"].append(
+        DATABASE["loans"].append(
             {
-                "order_id":
-                    ctx.order_id,
-
-                "customer":
-                    ctx.customer_id,
-
-                "sku":
-                    ctx.sku,
-
-                "amount":
-                    ctx.total,
-
-                "risk":
-                    ctx.risk["score"],
-
-                "variant":
-                    ctx.pricing["variant"]
+                "loan_id": ctx.loan_id,
+                "applicant": ctx.applicant_id,
+                "amount": ctx.amount,
+                "rate": ctx.rate,
+                "monthly_payment": ctx.monthly_payment,
+                "tier": ctx.trace.get("tier"),
+                "score_adjustment": ctx.credit["adjustment"],
             }
         )
 
@@ -351,18 +335,18 @@ class PersistenceStage(Stage):
 # REGISTRATION
 # ============================================================
 
-Container.register(
-    "order_pipeline",
+Registry.bind(
+    "loan_workflow",
 
-    Pipeline()
-        .add(CustomerStage())
-        .add(InventoryStage())
-        .add(PricingStage())
-        .add(TaxStage())
-        .add(LoyaltyStage())
-        .add(RiskStage())
-        .add(PaymentStage())
-        .add(PersistenceStage())
+    Workflow()
+        .then(ApplicantStep())
+        .then(BranchStep())
+        .then(CreditStep())
+        .then(RateStep())
+        .then(FeeStep())
+        .then(PaymentCalcStep())
+        .then(UnderwritingDecisionStep())
+        .then(DisbursementStep())
 )
 
 
@@ -370,43 +354,39 @@ Container.register(
 # PUBLIC API
 # ============================================================
 
-def process_order(
-    customer_id,
-    sku,
-    quantity,
-    promo=None,
-    source="WEB",
-    operator=None
+def process_loan(
+    applicant_id,
+    amount,
+    term_months,
+    branch="MAIN",
+    channel="ONLINE",
+    co_signer=None,
 ):
 
-    ctx = OrderContext(
-        customer_id=customer_id,
-        sku=sku,
-        quantity=quantity,
-        promo=promo,
-        source=source,
-        operator=operator
+    ctx = LoanContext(
+        applicant_id=applicant_id,
+        amount=amount,
+        term_months=term_months,
+        branch=branch,
+        channel=channel,
+        co_signer=co_signer,
     )
 
     try:
-        ctx = (
-            Container
-            .resolve("order_pipeline")
-            .run(ctx)
-        )
+        ctx = Registry.get("loan_workflow").execute(ctx)
 
         return {
             "success": True,
-            "order_id": ctx.order_id,
-            "fulfillment_id":
-                ctx.fulfillment_id,
-            "risk_score":
-                ctx.risk["score"]
+            "loan_id": ctx.loan_id,
+            "disbursement_id": ctx.disbursement_id,
+            "monthly_payment": round(ctx.monthly_payment, 2),
+            "rate": round(ctx.rate, 4),
         }
 
     except Exception as e:
+        return {"success": False, "error": str(e)}
 
-        return {
-            "success": False,
-            "error": str(e)
-        }
+
+if __name__ == "__main__":
+    print(process_loan("A100", 15000, 36))
+    print(process_loan("A102", 20000, 48))
