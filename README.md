@@ -7,7 +7,7 @@
 [![Validation](https://img.shields.io/badge/Pydantic-v2_Type_Safe-red.svg)](https://docs.pydantic.dev/)
 [![LLM Platform](https://img.shields.io/badge/Groq-Llama_3.3_70B-green.svg)](https://groq.com/)
 
-**Atomic Orchestrator** is an enterprise-grade, language-agnostic codebase analysis and structural decomposition framework. It transforms monolithic, tightly coupled repositories into sequential, human-readable **Atomic Work Units** while simultaneously mapping variable dependency chains and execution relationships.
+**Atomic Orchestrator** is an language-agnostic codebase analysis and structural decomposition framework. It transforms monolithic, tightly coupled repositories into sequential, human-readable **Atomic Work Units** while simultaneously mapping variable dependency chains and execution relationships.
 
 By combining compiler-level parsing, stateful multi-agent validation loops, and asynchronous Map-Reduce processing pipelines, the system dramatically reduces engineering onboarding complexity and architectural context debt.
 
