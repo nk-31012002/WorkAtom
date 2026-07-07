@@ -5,9 +5,6 @@ import uuid
 from dataclasses import dataclass, field
 
 
-# ============================================================
-# GLOBAL STATE
-# ============================================================
 
 DATABASE = {
     "applicants": {
@@ -385,6 +382,156 @@ def process_loan(
 
     except Exception as e:
         return {"success": False, "error": str(e)}
+    # ============================================================
+# ADDITIONAL STEPS
+# ============================================================
+
+class IdentityVerificationStep(Step):
+
+    def run(self, ctx):
+        verified = random.random() > 0.02
+
+        if not verified:
+            raise RuntimeError("IDENTITY_VERIFICATION_FAILED")
+
+        ctx.trace["identity_verified"] = True
+        return ctx
+
+
+class FraudCheckStep(Step):
+
+    def run(self, ctx):
+        risk = 0
+
+        if ctx.amount > 100000:
+            risk += 25
+
+        if ctx.channel == "ONLINE":
+            risk += 5
+
+        risk += random.randint(0, 10)
+
+        ctx.trace["fraud_score"] = risk
+
+        if risk > 30:
+            raise RuntimeError("FRAUD_DETECTED")
+
+        return ctx
+
+
+class IncomeVerificationStep(Step):
+
+    def run(self, ctx):
+
+        verified_income = ctx.applicant["income"] + random.randint(-1500, 1500)
+
+        ctx.trace["verified_income"] = verified_income
+
+        if verified_income < (ctx.applicant["income"] * 0.8):
+            raise RuntimeError("INCOME_VERIFICATION_FAILED")
+
+        return ctx
+
+
+class ReserveLockStep(Step):
+
+    def run(self, ctx):
+
+        reserve = DATABASE["branches"][ctx.branch]["reserve"]
+
+        if reserve < ctx.amount:
+            raise RuntimeError("RESERVE_LOCK_FAILED")
+
+        ctx.trace["reserve_locked"] = True
+        return ctx
+
+
+class AuditStep(Step):
+
+    def run(self, ctx):
+
+        ctx.trace["audit"] = {
+            "timestamp": time.time(),
+            "applicant": ctx.applicant_id,
+            "branch": ctx.branch,
+            "amount": ctx.amount,
+        }
+
+        return ctx
+
+
+class NotificationStep(Step):
+
+    def run(self, ctx):
+
+        ctx.trace["notification"] = {
+            "status": "QUEUED",
+            "channel": "EMAIL",
+        }
+
+        return ctx
+
+
+class LoanHistoryStep(Step):
+
+    def run(self, ctx):
+
+        previous = [
+            loan
+            for loan in DATABASE["loans"]
+            if loan["applicant"] == ctx.applicant_id
+        ]
+
+        ctx.trace["previous_loans"] = len(previous)
+
+        if len(previous) > 5:
+            ctx.credit["effective_score"] -= 10
+
+        return ctx
+
+
+class RiskClassificationStep(Step):
+
+    def run(self, ctx):
+
+        score = ctx.credit["effective_score"]
+
+        if score >= 720:
+            level = "LOW"
+        elif score >= 650:
+            level = "MEDIUM"
+        else:
+            level = "HIGH"
+
+        ctx.trace["risk_level"] = level
+        return ctx
+
+
+# ============================================================
+# UPDATED WORKFLOW REGISTRATION
+# ============================================================
+
+Registry.bind(
+    "loan_workflow",
+
+    Workflow()
+        .then(ApplicantStep())
+        .then(IdentityVerificationStep())
+        .then(BranchStep())
+        .then(IncomeVerificationStep())
+        .then(CreditStep())
+        .then(LoanHistoryStep())
+        .then(FraudCheckStep())
+        .then(RiskClassificationStep())
+        .then(RateStep())
+        .then(FeeStep())
+        .then(PaymentCalcStep())
+        .then(ReserveLockStep())
+        .then(UnderwritingDecisionStep())
+        .then(AuditStep())
+        .then(DisbursementStep())
+        .then(NotificationStep())
+)
 
 
 if __name__ == "__main__":
