@@ -1,4 +1,3 @@
-# async_map_reduce.py (Updated Implementation)
 import os
 import asyncio
 import time
@@ -7,7 +6,6 @@ from pydantic import BaseModel, Field
 import instructor
 from openai import AsyncOpenAI
 
-# 1. Import your brand new filesystem crawler tool!
 from repo_crawler import RepositoryCrawler
 
 class FileSummary(BaseModel):
@@ -77,12 +75,11 @@ async def reduce_summaries(summaries: List[FileSummary]) -> SystemArchitectureMa
     )
     return response
 
-# REWRITTEN ENTRANCE LAYER: Dynamically targeting folders
 async def main():
-    # Target any local codebase folder. Using "." scans your active Atomic Orchestrator directory!
+
     target_repo_folder = "." 
     
-    # Initialize our crawler asset
+
     crawler = RepositoryCrawler(target_repo_folder)
     live_codebase = crawler.scan_repository()
     
@@ -93,13 +90,11 @@ async def main():
     print("\n⚡ Initializing Asynchronous Map-Reduce Pipeline...")
     global_start = time.time()
     
-    # Step 1: Create async tasks for ALL discovered files dynamically
     tasks = [map_parse_file(fname, code) for fname, code in live_codebase.items()]
     
     print(f"[Orchestrator] Launching {len(tasks)} Map Workers concurrently over Groq API...\n")
     map_outputs = await asyncio.gather(*tasks)
     
-    # Step 2: Run the aggregation layer
     final_architecture_map = await reduce_summaries(map_outputs)
     
     total_elapsed = time.time() - global_start
