@@ -84,7 +84,6 @@ def generate_mermaid_chart(result: CodeDecomposition):
             
     print("```\n")
     
-# Replace from line 84 down to the end of parser_mvp.py with this:
 
 def analyze_and_decompose_file(raw_code: str, function_to_parse: str):
     """Processes raw code content directly, bypasses disk reading, and builds visualization maps."""
@@ -98,7 +97,6 @@ def analyze_and_decompose_file(raw_code: str, function_to_parse: str):
     print("  -> AST Structure Generated Successfully.")
     print("  -> Contacting Breakdown Engine...")
     
-    # FIX: Pass BOTH required positional arguments right here!
     decomposition_result = get_atomic_breakdown(function_to_parse, raw_code)
     
     # --- STEP 3: Generate and display your charts ---
@@ -109,7 +107,6 @@ def analyze_and_decompose_file(raw_code: str, function_to_parse: str):
     generate_mermaid_chart(decomposition_result)
 
 
-# Updated execution block inside parser_mvp.py
 if __name__ == "__main__":
     from repo_crawler import RepositoryCrawler
     
