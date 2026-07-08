@@ -5,12 +5,10 @@ from typing import Dict
 class RepositoryCrawler:
     def __init__(self, target_directory: str):
         self.target_directory = os.path.abspath(target_directory)
-        # Folders we want to completely ignore during an enterprise code scan
         self.ignored_dirs = {
             ".git", "__pycache__", ".venv", "venv", "node_modules", 
             ".idea", ".vscode", "dist", "build"
         }
-        # Extensions we want to read (We can easily add .js, .ts, .java here later!)
         # self.supported_extensions = {".py"}
         self.supported_extensions = {".py", ".js", ".jsx", ".ts", ".tsx"}
 
@@ -27,14 +25,12 @@ class RepositoryCrawler:
             return codebase_matrix
 
         for root, dirs, files in os.walk(self.target_directory):
-            # Modifying dirs in-place allows os.walk to efficiently skip ignored folders entirely
             dirs[:] = [d for d in dirs if d not in self.ignored_dirs]
             
             for file in files:
                 ext = os.path.splitext(file)[1]
                 if ext in self.supported_extensions:
                     full_path = os.path.join(root, file)
-                    # Compute relative path so the LLM output is neat and readable
                     rel_path = os.path.relpath(full_path, self.target_directory)
                     
                     try:
@@ -47,7 +43,6 @@ class RepositoryCrawler:
         return codebase_matrix
 
 if __name__ == "__main__":
-    # Quick self-test to verify crawler behavior in your active folder
     crawler = RepositoryCrawler(".")
     found_files = crawler.scan_repository()
     print("\nDiscovered Modules:")
