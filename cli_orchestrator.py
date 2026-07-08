@@ -69,7 +69,6 @@ async def run_pipeline():
             
             print(f"\n🎨 Executing Structural Breakdown Pipeline on {chosen_file} -> {target_func}()...")
             
-            # Runs your structural extraction model layout directly
             decomposition_result = get_atomic_breakdown(target_func, raw_code)
             generate_mermaid_chart(decomposition_result)
             
