@@ -1,539 +1,108 @@
-import time
-import random
+import collections
 import hashlib
-import uuid
-from dataclasses import dataclass, field
+import time
 
 
-
-DATABASE = {
-    "applicants": {
-        "A100": {"name": "J. Rao", "score": 640, "income": 52000, "debts": 12000, "flags": []},
-        "A101": {"name": "P. Singh", "score": 710, "income": 88000, "debts": 4000, "flags": []},
-        "A102": {"name": "M. Devi", "score": 580, "income": 31000, "debts": 21000, "flags": ["late_payment"]},
-    },
-    "branches": {
-        "MAIN": {"reserve": 5_000_000, "risk_appetite": 1.0},
-        "SATELLITE": {"reserve": 750_000, "risk_appetite": 0.6},
-    },
-    "loans": [],
-}
-
-
-# ============================================================
-# SERVICE LOCATOR
-# ============================================================
-
-class Registry:
-    _bindings = {}
-
-    @classmethod
-    def bind(cls, key, value):
-        cls._bindings[key] = value
-
-    @classmethod
-    def get(cls, key):
-        return cls._bindings[key]
-
-
-# ============================================================
-# CONTEXT
-# ============================================================
-
-@dataclass
-class LoanContext:
-    applicant_id: str
-    amount: float
-    term_months: int
-    branch: str = "MAIN"
-    channel: str = "ONLINE"
-    co_signer: str = None
-
-    applicant: dict = None
-    branch_info: dict = None
-    credit: object = None
-    rate: float = 0.0
-    fees: float = 0.0
-    monthly_payment: float = 0.0
-    underwriting: object = None
-    approved: bool = False
-    loan_id: str = None
-    disbursement_id: str = None
-
-    trace: dict = field(default_factory=dict)
-
-
-# ============================================================
-# PIPELINE FRAMEWORK
-# ============================================================
-
-class Step:
-    def run(self, ctx):
-        raise NotImplementedError()
-
-
-class Workflow:
+class _E:
 
     def __init__(self):
-        self.steps = []
+        self.s = {
+            "SYS_MINT": {"b": 10000000, "t": "M"},
+            "U101": {"b": 5000, "t": "U"},
+            "U102": {"b": 2500, "t": "U"},
+            "U103": {"b": 0, "t": "U"},
+        }
+        self.c = []
+        self.p = "0" * 64
 
-    def then(self, step):
-        self.steps.append(step)
+    def _h(self, i, p, t, n):
+        return hashlib.sha256(f"{i}{p}{t}{n}".encode()).hexdigest()
+
+    def _v(self, src, dst, am):
+        if src not in self.s or dst not in self.s:
+            raise Exception("E1")
+        if self.s[src]["b"] < am:
+            raise Exception("E2")
+        if am <= 0:
+            raise Exception("E3")
+        return True
+
+
+_env = _E()
+
+
+def _t1(ctx):
+    _env._v(ctx.src, ctx.dst, ctx.am)
+    return ctx
+
+
+def _t2(ctx):
+    ctx.fee = ctx.am * 0.0025 if ctx.src != "SYS_MINT" else 0.0
+    if ctx.src != "SYS_MINT" and _env.s[ctx.src]["b"] < (ctx.am + ctx.fee):
+        raise Exception("E4")
+    return ctx
+
+
+def _t3(ctx):
+    _env.s[ctx.src]["b"] -= ctx.am + ctx.fee
+    _env.s[ctx.dst]["b"] += ctx.am
+    if ctx.fee > 0:
+        _env.s["SYS_MINT verso"]["b"] = (
+            _env.s.get("SYS_MINT verso", {"b": 0})["b"] + ctx.fee
+        )
+    return ctx
+
+
+def _t4(ctx):
+    idx = len(_env.c)
+    ts = time.time()
+    n = 0
+    t_str = f"{ctx.src}->{ctx.dst}:{ctx.am}"
+    while True:
+        h = _env._h(idx, _env.p, t_str, n)
+        if h.startswith("00"):
+            break
+        n += 1
+    _env.c.append({"i": idx, "p": _env.p, "t": t_str, "n": n, "h": h})
+    _env.p = h
+    ctx.tx_id = h
+    return ctx
+
+
+class _W:
+
+    def __init__(self):
+        self.p = []
+
+    def _n(self, f):
+        self.p.append(f)
         return self
 
-    def execute(self, ctx):
-        for step in self.steps:
-            ctx = step.run(ctx)
-        return ctx
+    def _e(self, c):
+        for f in self.p:
+            c = f(c)
+        return c
 
 
-# ============================================================
-# SCORING ENGINE
-# ============================================================
+_pipeline = _W()._n(_t1)._n(_t2)._n(_t3)._n(_t4)
 
-class ScoreEngine:
 
-    def __init__(self):
-        self.modifiers = []
+class _Ctx:
 
-    def add(self, fn):
-        self.modifiers.append(fn)
+    def __init__(self, **kw):
+        for k, v in kw.items():
+            setattr(self, k, v)
 
-    def evaluate(self, applicant, amount, branch_info):
-        base = random.randint(-10, 10)
 
-        for mod in self.modifiers:
-            base += mod(applicant, amount, branch_info)
-
-        return base
-
-
-underwriting_rules = ScoreEngine()
-
-underwriting_rules.add(
-    lambda a, amt, b: -25 if a["score"] < 600 else 0
-)
-
-underwriting_rules.add(
-    lambda a, amt, b: 15 if a["income"] > 60000 else 0
-)
-
-underwriting_rules.add(
-    lambda a, amt, b: -20 if "late_payment" in a["flags"] else 0
-)
-
-underwriting_rules.add(
-    lambda a, amt, b: -10 if (amt / max(a["income"], 1)) > 0.4 else 0
-)
-
-underwriting_rules.add(
-    lambda a, amt, b: int(10 * b["risk_appetite"])
-)
-
-
-# ============================================================
-# STRATEGIES
-# ============================================================
-
-class RateStrategy:
-    def compute(self, applicant, amount, term, branch_info):
-        raise NotImplementedError()
-
-
-class TieredRate(RateStrategy):
-
-    def compute(self, applicant, amount, term, branch_info):
-
-        tiers = {
-            "A": 0.045,
-            "B": 0.065,
-            "C": 0.095,
-        }
-
-        tier = "B"
-
-        if applicant["score"] >= 700:
-            tier = "A"
-        elif applicant["score"] < 620:
-            tier = "C"
-
-        rate = tiers[tier]
-
-        if term > 60:
-            rate += 0.01
-
-        if random.randint(1, 100) > 55:
-            rate += 0.0025
-            tier += "+"
-
-        rate *= (2.0 - branch_info["risk_appetite"])
-
-        return {"rate": rate, "tier": tier}
-
-
-class RateFactory:
-
-    @staticmethod
-    def resolve():
-        return TieredRate()
-
-
-# ============================================================
-# STEPS
-# ============================================================
-
-class ApplicantStep(Step):
-
-    def run(self, ctx):
-        applicant = DATABASE["applicants"].get(ctx.applicant_id)
-
-        if not applicant:
-            raise RuntimeError("UNKNOWN_APPLICANT")
-
-        ctx.applicant = applicant
-        return ctx
-
-
-class BranchStep(Step):
-
-    def run(self, ctx):
-        info = DATABASE["branches"].get(ctx.branch)
-
-        if not info:
-            raise RuntimeError("UNKNOWN_BRANCH")
-
-        if ctx.channel == "PARTNER":
-            info = dict(info)
-            info["risk_appetite"] += 0.15
-
-        if info["reserve"] < ctx.amount:
-            raise RuntimeError("INSUFFICIENT_RESERVE")
-
-        ctx.branch_info = info
-        return ctx
-
-
-class CreditStep(Step):
-
-    def run(self, ctx):
-        score = underwriting_rules.evaluate(
-            ctx.applicant, ctx.amount, ctx.branch_info
-        )
-
-        ctx.credit = {
-            "adjustment": score,
-            "effective_score": ctx.applicant["score"] + score,
-        }
-
-        return ctx
-
-
-class RateStep(Step):
-
-    def run(self, ctx):
-        strategy = RateFactory.resolve()
-
-        result = strategy.compute(
-            ctx.applicant, ctx.amount, ctx.term_months, ctx.branch_info
-        )
-
-        ctx.rate = result["rate"]
-        ctx.trace["tier"] = result["tier"]
-
-        return ctx
-
-
-class FeeStep(Step):
-
-    def run(self, ctx):
-        fee = ctx.amount * 0.01
-
-        if ctx.channel == "ONLINE":
-            fee *= 0.5
-
-        if ctx.co_signer:
-            fee -= 15
-
-        fee = max(fee, 25)
-
-        ctx.fees = fee
-        return ctx
-
-
-class PaymentCalcStep(Step):
-
-    def run(self, ctx):
-        monthly_rate = ctx.rate / 12
-        n = ctx.term_months
-
-        if monthly_rate == 0:
-            payment = ctx.amount / n
-        else:
-            payment = (
-                ctx.amount
-                * monthly_rate
-                * (1 + monthly_rate) ** n
-                / ((1 + monthly_rate) ** n - 1)
-            )
-
-        ctx.monthly_payment = payment + (ctx.fees / n)
-        return ctx
-
-
-class UnderwritingDecisionStep(Step):
-
-    def run(self, ctx):
-        effective = ctx.credit["effective_score"]
-
-        dti = (ctx.monthly_payment * 12) / max(ctx.applicant["income"], 1)
-
-        decision = {
-            "effective_score": effective,
-            "dti": dti,
-            "denied": effective < 590 or dti > 0.5,
-        }
-
-        ctx.underwriting = decision
-
-        if decision["denied"]:
-            raise RuntimeError("UNDERWRITING_DENIED")
-
-        ctx.approved = True
-        return ctx
-
-
-class DisbursementStep(Step):
-
-    def run(self, ctx):
-        DATABASE["branches"][ctx.branch]["reserve"] -= ctx.amount
-
-        ctx.loan_id = hashlib.sha256(
-            (str(time.time()) + str(random.random()) + ctx.applicant_id).encode()
-        ).hexdigest()
-
-        ctx.disbursement_id = str(uuid.uuid4())
-
-        DATABASE["loans"].append(
-            {
-                "loan_id": ctx.loan_id,
-                "applicant": ctx.applicant_id,
-                "amount": ctx.amount,
-                "rate": ctx.rate,
-                "monthly_payment": ctx.monthly_payment,
-                "tier": ctx.trace.get("tier"),
-                "score_adjustment": ctx.credit["adjustment"],
-            }
-        )
-
-        return ctx
-
-
-# ============================================================
-# REGISTRATION
-# ============================================================
-
-Registry.bind(
-    "loan_workflow",
-
-    Workflow()
-        .then(ApplicantStep())
-        .then(BranchStep())
-        .then(CreditStep())
-        .then(RateStep())
-        .then(FeeStep())
-        .then(PaymentCalcStep())
-        .then(UnderwritingDecisionStep())
-        .then(DisbursementStep())
-)
-
-
-# ============================================================
-# PUBLIC API
-# ============================================================
-
-def process_loan(
-    applicant_id,
-    amount,
-    term_months,
-    branch="MAIN",
-    channel="ONLINE",
-    co_signer=None,
-):
-
-    ctx = LoanContext(
-        applicant_id=applicant_id,
-        amount=amount,
-        term_months=term_months,
-        branch=branch,
-        channel=channel,
-        co_signer=co_signer,
-    )
-
+def exec_tx(src, dst, am):
+    c = _Ctx(src=src, dst=dst, am=am, fee=0.0, tx_id=None)
     try:
-        ctx = Registry.get("loan_workflow").execute(ctx)
-
-        return {
-            "success": True,
-            "loan_id": ctx.loan_id,
-            "disbursement_id": ctx.disbursement_id,
-            "monthly_payment": round(ctx.monthly_payment, 2),
-            "rate": round(ctx.rate, 4),
-        }
-
+        c = _pipeline._e(c)
+        return {"success": True, "tx": c.tx_id, "bal": _env.s[src]["b"]}
     except Exception as e:
-        return {"success": False, "error": str(e)}
-    # ============================================================
-# ADDITIONAL STEPS
-# ============================================================
-
-class IdentityVerificationStep(Step):
-
-    def run(self, ctx):
-        verified = random.random() > 0.02
-
-        if not verified:
-            raise RuntimeError("IDENTITY_VERIFICATION_FAILED")
-
-        ctx.trace["identity_verified"] = True
-        return ctx
-
-
-class FraudCheckStep(Step):
-
-    def run(self, ctx):
-        risk = 0
-
-        if ctx.amount > 100000:
-            risk += 25
-
-        if ctx.channel == "ONLINE":
-            risk += 5
-
-        risk += random.randint(0, 10)
-
-        ctx.trace["fraud_score"] = risk
-
-        if risk > 30:
-            raise RuntimeError("FRAUD_DETECTED")
-
-        return ctx
-
-
-class IncomeVerificationStep(Step):
-
-    def run(self, ctx):
-
-        verified_income = ctx.applicant["income"] + random.randint(-1500, 1500)
-
-        ctx.trace["verified_income"] = verified_income
-
-        if verified_income < (ctx.applicant["income"] * 0.8):
-            raise RuntimeError("INCOME_VERIFICATION_FAILED")
-
-        return ctx
-
-
-class ReserveLockStep(Step):
-
-    def run(self, ctx):
-
-        reserve = DATABASE["branches"][ctx.branch]["reserve"]
-
-        if reserve < ctx.amount:
-            raise RuntimeError("RESERVE_LOCK_FAILED")
-
-        ctx.trace["reserve_locked"] = True
-        return ctx
-
-
-class AuditStep(Step):
-
-    def run(self, ctx):
-
-        ctx.trace["audit"] = {
-            "timestamp": time.time(),
-            "applicant": ctx.applicant_id,
-            "branch": ctx.branch,
-            "amount": ctx.amount,
-        }
-
-        return ctx
-
-
-class NotificationStep(Step):
-
-    def run(self, ctx):
-
-        ctx.trace["notification"] = {
-            "status": "QUEUED",
-            "channel": "EMAIL",
-        }
-
-        return ctx
-
-
-class LoanHistoryStep(Step):
-
-    def run(self, ctx):
-
-        previous = [
-            loan
-            for loan in DATABASE["loans"]
-            if loan["applicant"] == ctx.applicant_id
-        ]
-
-        ctx.trace["previous_loans"] = len(previous)
-
-        if len(previous) > 5:
-            ctx.credit["effective_score"] -= 10
-
-        return ctx
-
-
-class RiskClassificationStep(Step):
-
-    def run(self, ctx):
-
-        score = ctx.credit["effective_score"]
-
-        if score >= 720:
-            level = "LOW"
-        elif score >= 650:
-            level = "MEDIUM"
-        else:
-            level = "HIGH"
-
-        ctx.trace["risk_level"] = level
-        return ctx
-
-
-# ============================================================
-# UPDATED WORKFLOW REGISTRATION
-# ============================================================
-
-Registry.bind(
-    "loan_workflow",
-
-    Workflow()
-        .then(ApplicantStep())
-        .then(IdentityVerificationStep())
-        .then(BranchStep())
-        .then(IncomeVerificationStep())
-        .then(CreditStep())
-        .then(LoanHistoryStep())
-        .then(FraudCheckStep())
-        .then(RiskClassificationStep())
-        .then(RateStep())
-        .then(FeeStep())
-        .then(PaymentCalcStep())
-        .then(ReserveLockStep())
-        .then(UnderwritingDecisionStep())
-        .then(AuditStep())
-        .then(DisbursementStep())
-        .then(NotificationStep())
-)
+        return {"success": False, "err": str(e)}
 
 
 if __name__ == "__main__":
-    print(process_loan("A100", 15000, 36))
-    print(process_loan("A102", 20000, 48))
+    print(exec_tx("U101", "U103", 1000))
+    print(exec_tx("U102", "U101", 5000))
