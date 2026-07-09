@@ -1,108 +1,112 @@
-import collections
-import hashlib
 import time
 
 
-class _E:
+class _I:
 
     def __init__(self):
-        self.s = {
-            "SYS_MINT": {"b": 10000000, "t": "M"},
-            "U101": {"b": 5000, "t": "U"},
-            "U102": {"b": 2500, "t": "U"},
-            "U103": {"b": 0, "t": "U"},
+        self.v = {
+            "P001": {"q": 12, "p": 299.99, "w": 1.5, "l": "WH_EAST"},
+            "P002": {"q": 0, "p": 49.99, "w": 0.2, "l": "WH_WEST"},
+            "P003": {"q": 150, "p": 9.99, "w": 0.1, "l": "WH_EAST"},
         }
-        self.c = []
-        self.p = "0" * 64
-
-    def _h(self, i, p, t, n):
-        return hashlib.sha256(f"{i}{p}{t}{n}".encode()).hexdigest()
-
-    def _v(self, src, dst, am):
-        if src not in self.s or dst not in self.s:
-            raise Exception("E1")
-        if self.s[src]["b"] < am:
-            raise Exception("E2")
-        if am <= 0:
-            raise Exception("E3")
-        return True
+        self.r = {"ZONE_A": 15.0, "ZONE_B": 25.0, "ZONE_C": 45.0}
 
 
-_env = _E()
+_inv = _I()
 
 
-def _t1(ctx):
-    _env._v(ctx.src, ctx.dst, ctx.am)
-    return ctx
-
-
-def _t2(ctx):
-    ctx.fee = ctx.am * 0.0025 if ctx.src != "SYS_MINT" else 0.0
-    if ctx.src != "SYS_MINT" and _env.s[ctx.src]["b"] < (ctx.am + ctx.fee):
-        raise Exception("E4")
-    return ctx
-
-
-def _t3(ctx):
-    _env.s[ctx.src]["b"] -= ctx.am + ctx.fee
-    _env.s[ctx.dst]["b"] += ctx.am
-    if ctx.fee > 0:
-        _env.s["SYS_MINT verso"]["b"] = (
-            _env.s.get("SYS_MINT verso", {"b": 0})["b"] + ctx.fee
-        )
-    return ctx
-
-
-def _t4(ctx):
-    idx = len(_env.c)
-    ts = time.time()
-    n = 0
-    t_str = f"{ctx.src}->{ctx.dst}:{ctx.am}"
-    while True:
-        h = _env._h(idx, _env.p, t_str, n)
-        if h.startswith("00"):
-            break
-        n += 1
-    _env.c.append({"i": idx, "p": _env.p, "t": t_str, "n": n, "h": h})
-    _env.p = h
-    ctx.tx_id = h
-    return ctx
-
-
-class _W:
-
-    def __init__(self):
-        self.p = []
-
-    def _n(self, f):
-        self.p.append(f)
-        return self
-
-    def _e(self, c):
-        for f in self.p:
-            c = f(c)
-        return c
-
-
-_pipeline = _W()._n(_t1)._n(_t2)._n(_t3)._n(_t4)
-
-
-class _Ctx:
+class _O:
 
     def __init__(self, **kw):
         for k, v in kw.items():
             setattr(self, k, v)
 
 
-def exec_tx(src, dst, am):
-    c = _Ctx(src=src, dst=dst, am=am, fee=0.0, tx_id=None)
+def _f1(o):
+    for pid, qty in o.items.items():
+        p = _inv.v.get(pid)
+        if not p:
+            raise Exception("ERR_UNK")
+        if p["q"] < qty:
+            raise Exception("ERR_OOS")
+    return o
+
+
+def _f2(o):
+    tot = 0.0
+    w = 0.0
+    for pid, qty in o.items.items():
+        tot += _inv.v[pid]["p"] * qty
+        w += _inv.v[pid]["w"] * qty
+    o.sub = tot
+    o.w = w
+    return o
+
+
+def _f3(o):
+    base = _inv.r.get(o.zone, 50.0)
+    if o.sub > 500.0:
+        base = 0.0
+    elif o.w > 10.0:
+        base += (o.w - 10.0) * 2.5
+    o.ship = base
+    return o
+
+
+def _f4(o):
+    o.tax = (o.sub + o.ship) * 0.0825
+    o.total = o.sub + o.ship + o.tax
+    return o
+
+
+def _f5(o):
+    for pid, qty in o.items.items():
+        _inv.v[pid]["q"] -= qty
+    o.status = "ALLOCATED"
+    return o
+
+
+class _Flow:
+
+    def __init__(self):
+        self.s = []
+
+    def _add(self, f):
+        self.s.append(f)
+        return self
+
+    def _run(self, o):
+        for f in self.s:
+            o = f(o)
+        return o
+
+
+_engine = _Flow()._add(_f1)._add(_f2)._add(_f3)._add(_f4)._add(_f5)
+
+
+def process_order(items, zone):
+    o = _O(
+        items=items,
+        zone=zone,
+        sub=0.0,
+        w=0.0,
+        ship=0.0,
+        tax=0.0,
+        total=0.0,
+        status="PENDING",
+    )
     try:
-        c = _pipeline._e(c)
-        return {"success": True, "tx": c.tx_id, "bal": _env.s[src]["b"]}
+        o = _engine._run(o)
+        return {
+            "ok": True,
+            "total": round(o.total, 2),
+            "ship": round(o.ship, 2),
+            "status": o.status,
+        }
     except Exception as e:
-        return {"success": False, "err": str(e)}
+        return {"ok": False, "err": str(e)}
 
 
 if __name__ == "__main__":
-    print(exec_tx("U101", "U103", 1000))
-    print(exec_tx("U102", "U101", 5000))
+    print(process_order({"P001": 2, "P003": 5}, "ZONE_A"))
+    print(process_order({"P002": 1}, "ZONE_B"))
