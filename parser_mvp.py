@@ -24,7 +24,8 @@ client = instructor.from_openai(
     OpenAI(
         base_url="https://api.groq.com/openai/v1",
         api_key=os.environ.get("GROQ_API_KEY")
-    )
+    ),
+    mode=instructor.Mode.JSON
 )
 
 def get_atomic_breakdown(function_name: str, function_source: str) -> CodeDecomposition:
@@ -50,10 +51,11 @@ def get_atomic_breakdown(function_name: str, function_source: str) -> CodeDecomp
     """
 
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         response_model=CodeDecomposition,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.2
+        temperature=0.2,
+        max_tokens=8192
     )
     return response
 
@@ -86,26 +88,55 @@ def generate_mermaid_chart(result: CodeDecomposition):
     
 # Replace from line 84 down to the end of parser_mvp.py with this:
 
+def extract_function_source(raw_code: str, function_name: str) -> str:
+    """Extract only the requested function using Python AST."""
+
+    tree = ast.parse(raw_code)
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name == function_name:
+                source = ast.get_source_segment(raw_code, node)
+
+                if source:
+                    return source
+
+    raise ValueError(
+        f"Function '{function_name}' not found in source code."
+    )
+
 def analyze_and_decompose_file(raw_code: str, function_to_parse: str):
-    """Processes raw code content directly, bypasses disk reading, and builds visualization maps."""
+
     try:
-        # Pass the raw_code string directly to your AST tree parser
         tree = ast.parse(raw_code)
+
     except SyntaxError as e:
-        print(f"[!] Syntax Error detected while generating AST: {e}")
+        print(f"[!] Syntax Error: {e}")
         return
 
     print("  -> AST Structure Generated Successfully.")
+
+    # Extract only the requested function
+    function_source = extract_function_source(
+        raw_code,
+        function_to_parse
+    )
+
+    print(
+        f"  -> Extracted function: {function_to_parse}"
+    )
+
     print("  -> Contacting Breakdown Engine...")
-    
-    # FIX: Pass BOTH required positional arguments right here!
-    decomposition_result = get_atomic_breakdown(function_to_parse, raw_code)
-    
-    # --- STEP 3: Generate and display your charts ---
+
+    decomposition_result = get_atomic_breakdown(
+        function_to_parse,
+        function_source
+    )
+
     print("\n==================================================")
     print("🎨 GENERATING INTERACTIVE VISUALIZATION CONTRACT")
     print("==================================================")
-    
+
     generate_mermaid_chart(decomposition_result)
 
 

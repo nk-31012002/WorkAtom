@@ -28,31 +28,62 @@ async_client = instructor.from_openai(
     mode=instructor.Mode.JSON
 )
 
+# sem = asyncio.Semaphore(3)
+
+# async def map_parse_file(filename: str, source_code: str) -> FileSummary:
+#     """Worker thread that analyzes an individual file concurrently without blocking others."""
+#     print(f"[Map Worker] 🚀 Started processing: {filename}")
+#     start_time = time.time()
+    
+#     prompt = f"""
+#     Analyze the following source code module. Extract all major function names and 
+#     summarize its core architectural purpose in a single, clear sentence.
+    
+#     Filename: {filename}
+#     Source Code:
+#     ```python
+#     {source_code}
+#     ```
+#     """
+#     response = await async_client.chat.completions.create(
+#         model="openai/gpt-oss-20b",
+#         response_model=FileSummary,
+#         messages=[{"role": "user", "content": prompt}],
+#         temperature=0.1
+#     )
+#     elapsed = time.time() - start_time
+#     print(f"[Map Worker] ✅ Finished: {filename} in {elapsed:.2f}s")
+#     return response
+sem = asyncio.Semaphore(3)
+
 async def map_parse_file(filename: str, source_code: str) -> FileSummary:
     """Worker thread that analyzes an individual file concurrently without blocking others."""
-    print(f"[Map Worker] 🚀 Started processing: {filename}")
-    start_time = time.time()
+    async with sem:
+        print(f"[Map Worker] 🚀 Started processing: {filename}")
+        start_time = time.time()
+        
+        prompt = f"""
+        Analyze the following source code module. Extract all major function names and 
+        summarize its core architectural purpose in a single, clear sentence.
+        
+        Filename: {filename}
+        Source Code:
+        ```python
+        {source_code}
+        ```
+        """
+        response = await async_client.chat.completions.create(
+            model="openai/gpt-oss-20b",
+            max_retries=4,
+            response_model=FileSummary,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1
+        )
+        elapsed = time.time() - start_time
+        print(f"[Map Worker] ✅ Finished: {filename} in {elapsed:.2f}s")
+        await asyncio.sleep(2.5)
+        return response
     
-    prompt = f"""
-    Analyze the following source code module. Extract all major function names and 
-    summarize its core architectural purpose in a single, clear sentence.
-    
-    Filename: {filename}
-    Source Code:
-    ```python
-    {source_code}
-    ```
-    """
-    response = await async_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        response_model=FileSummary,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.1
-    )
-    elapsed = time.time() - start_time
-    print(f"[Map Worker] ✅ Finished: {filename} in {elapsed:.2f}s")
-    return response
-
 async def reduce_summaries(summaries: List[FileSummary]) -> SystemArchitectureMap:
     """Compiles all independent map outputs into a singular, cohesive global structural index."""
     print(f"\n[Reduce Engine] 📥 Aggregating {len(summaries)} file summaries into global index...")
@@ -70,7 +101,7 @@ async def reduce_summaries(summaries: List[FileSummary]) -> SystemArchitectureMa
     {serialized_context}
     """
     response = await async_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-20b",
         response_model=SystemArchitectureMap,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2
