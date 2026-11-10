@@ -1,4 +1,3 @@
-# parser_mvp.py
 import ast
 import os
 from typing import List
@@ -6,7 +5,6 @@ from pydantic import BaseModel, Field
 import instructor
 from openai import OpenAI
 
-# 1. Define the Strict Atomic Output Schema
 class AtomicWorkUnit(BaseModel):
     step_number: int = Field(description="The sequential step order number")
     title: str = Field(description="Action-oriented title starting with a clear verb")
@@ -19,7 +17,6 @@ class CodeDecomposition(BaseModel):
     high_level_purpose: str
     atomic_steps: List[AtomicWorkUnit]
 
-# 2. Initialize the Structured LLM Client configured for GROQ
 client = instructor.from_openai(
     OpenAI(
         base_url="https://api.groq.com/openai/v1",
@@ -67,8 +64,8 @@ def generate_mermaid_chart(result: CodeDecomposition):
     print("  classDef val fill:#f9f,stroke:#333,stroke-width:2px;")
     print("  classDef state fill:#bbf,stroke:#333,stroke-width:2px;")
     print("  classDef side fill:#fbb,stroke:#333,stroke-width:2px;")
+
     
-    # 1. Generate Nodes
     for step in result.atomic_steps:
         style_class = "state"
         if "Validation" in step.category:
@@ -79,14 +76,14 @@ def generate_mermaid_chart(result: CodeDecomposition):
         print(f'  Step{step.step_number}["Step {step.step_number}: {step.title}"]')
         print(f'  class Step{step.step_number} {style_class};')
 
-    # 2. Generate Impact Arrows
+
     for step in result.atomic_steps:
         for affected in step.affects_steps:
             print(f"  Step{step.step_number} --> Step{affected}")
             
     print("```\n")
     
-# Replace from line 84 down to the end of parser_mvp.py with this:
+
 
 def extract_function_source(raw_code: str, function_name: str) -> str:
     """Extract only the requested function using Python AST."""
@@ -116,7 +113,6 @@ def analyze_and_decompose_file(raw_code: str, function_to_parse: str):
 
     print("  -> AST Structure Generated Successfully.")
 
-    # Extract only the requested function
     function_source = extract_function_source(
         raw_code,
         function_to_parse
@@ -140,25 +136,20 @@ def analyze_and_decompose_file(raw_code: str, function_to_parse: str):
     generate_mermaid_chart(decomposition_result)
 
 
-# Updated execution block inside parser_mvp.py
 if __name__ == "__main__":
     from repo_crawler import RepositoryCrawler
     
-    # 1. Dynamically scan the workspace directory
     crawler = RepositoryCrawler(".")
     live_codebase = crawler.scan_repository()
     
-    # 2. Pick a target file and function found by the crawler to visualize
     target_file = "target_code.py" 
     target_function = "process_order"
     
     if target_file in live_codebase:
         print(f"\n⚡ Running Structural Breakdown Pipeline on: {target_file} -> {target_function}()...")
         
-        # Ingest code directly from the crawler's memory matrix
         raw_code_content = live_codebase[target_file]
         
-        # Pass BOTH arguments into the main orchestration handler
         analyze_and_decompose_file(raw_code_content, target_function)
     else:
         print(f"[!] Target file '{target_file}' not found by repository crawler.")
