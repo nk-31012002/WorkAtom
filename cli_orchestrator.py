@@ -1,4 +1,3 @@
-# cli_orchestrator.py
 import os
 import asyncio
 import argparse
@@ -27,7 +26,6 @@ async def run_pipeline():
     print("🤖 Welcome to the Atomic Orchestrator Terminal Interface")
     print("==================================================================")
     
-    # Phase 1: Initialize System Crawl
     crawler = RepositoryCrawler(target_path)
     live_codebase = crawler.scan_repository()
     
@@ -35,7 +33,6 @@ async def run_pipeline():
         print("[!] No compatible files discovered. Exiting.")
         return
 
-    # Phase 2: Asynchronous High-Speed System Mapping
     print("\n⚡ Running Asynchronous Global Repository Map-Reduce Indexing...")
     tasks = [map_parse_file(fname, code) for fname, code in live_codebase.items()]
     map_outputs = await asyncio.gather(*tasks)
@@ -52,7 +49,6 @@ async def run_pipeline():
         print(f" [{i}] {module.filename}")
         print(f"     ↳ Core Responsibility: {module.core_purpose}")
     
-    # Phase 3: Interactive Deep Dive Selection
     print("\n==================================================================")
     print("🔍 DEEP INTEGRITY COMPILATION & VISUALIZATION")
     print("==================================================================")
@@ -69,7 +65,6 @@ async def run_pipeline():
             
             print(f"\n🎨 Executing Structural Breakdown Pipeline on {chosen_file} -> {target_func}()...")
             
-            # Runs your structural extraction model layout directly
             decomposition_result = get_atomic_breakdown(target_func, raw_code)
             generate_mermaid_chart(decomposition_result)
             
